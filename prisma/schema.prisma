@@ -1,0 +1,98 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Checkin {
+  id         Int           @id @default(autoincrement())
+  code       String        @unique @db.VarChar(20)
+  date       DateTime      @db.Date
+  status     CheckinStatus @default(Draft)
+  contact    String?       @db.VarChar(100)
+  warehouse  String?       @db.VarChar(100)
+  user       String?       @db.VarChar(100)
+  details    String?       @db.Text
+  created_at DateTime      @default(now())
+  items      CheckinItem[]
+
+  @@map("checkins")
+}
+
+model CheckinItem {
+  id         Int     @id @default(autoincrement())
+  checkin_id Int
+  name       String? @db.VarChar(100)
+  code       String? @db.VarChar(50)
+  weight     String? @db.VarChar(50)
+  quantity   String? @db.VarChar(50)
+  checkin    Checkin @relation(fields: [checkin_id], references: [id], onDelete: Cascade)
+
+  @@map("checkin_items")
+}
+
+model Checkout {
+  id         Int            @id @default(autoincrement())
+  code       String         @unique @db.VarChar(20)
+  date       DateTime       @db.Date
+  status     CheckoutStatus @default(Draft)
+  contact    String?        @db.VarChar(100)
+  warehouse  String?        @db.VarChar(100)
+  user       String?        @db.VarChar(100)
+  details    String?        @db.Text
+  created_at DateTime       @default(now())
+  items      CheckoutItem[]
+
+  @@map("checkouts")
+}
+
+model CheckoutItem {
+  id          Int      @id @default(autoincrement())
+  checkout_id Int
+  name        String?  @db.VarChar(100)
+  code        String?  @db.VarChar(50)
+  weight      String?  @db.VarChar(50)
+  quantity    String?  @db.VarChar(50)
+  checkout    Checkout @relation(fields: [checkout_id], references: [id], onDelete: Cascade)
+
+  @@map("checkout_items")
+}
+
+model Contact {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(100)
+  email      String?  @db.VarChar(100)
+  phone      String?  @db.VarChar(50)
+  details    String?  @db.Text
+  created_at DateTime @default(now())
+
+  @@map("contacts")
+}
+
+model Warehouse {
+  id         Int      @id @default(autoincrement())
+  code       String   @unique @db.VarChar(50)
+  name       String   @db.VarChar(100)
+  phone      String?  @db.VarChar(50)
+  email      String?  @db.VarChar(100)
+  address    String?  @db.Text
+  is_active  Int      @default(1)
+  created_at DateTime @default(now())
+
+  @@map("warehouses")
+}
+
+enum CheckinStatus {
+  Draft
+  Completed
+  Pending
+}
+
+enum CheckoutStatus {
+  Draft
+  Completed
+  Pending
+}

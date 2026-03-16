@@ -1,5 +1,5 @@
 import type { Request, Response } from "express";
-import db from "../config/db";
+import prisma from "../config/prisma";
 
 interface ContactBody {
   name: string;
@@ -20,28 +20,29 @@ export const getAll = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { search = "", page = "1", limit = "10" } = req.query;
+    const { search = "", page = "1", limit = "10" } = req.query as any;
     const pageNum = Number(page);
     const limitNum = Number(limit);
-    const offset = (pageNum - 1) * limitNum;
 
-    let where = "WHERE 1=1";
-    const params: (string | number)[] = [];
+    const where: any = {};
 
     if (search) {
-      where += " AND (name LIKE ? OR email LIKE ? OR phone LIKE ?)";
-      params.push(`%${search}%`, `%${search}%`, `%${search}%`);
+      where.OR = [
+        { name: { contains: search } },
+        { email: { contains: search } },
+        { phone: { contains: search } },
+      ];
     }
 
-    const [[{ total }]] = await db.query<any>(
-      `SELECT COUNT(*) as total FROM contacts ${where}`,
-      params,
-    );
-
-    const [contacts] = await db.query<any[]>(
-      `SELECT * FROM contacts ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      [...params, limitNum, offset],
-    );
+    const [total, contacts] = await prisma.$transaction([
+      prisma.contact.count({ where }),
+      prisma.contact.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+      }),
+    ]);
 
     res.json({ total, page: pageNum, limit: limitNum, data: contacts });
   } catch (err: any) {
@@ -55,16 +56,15 @@ export const getOne = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { id } = req.params;
-    const [rows] = await db.query<any[]>(
-      "SELECT * FROM contacts WHERE id = ?",
-      [id],
-    );
-    if (!rows || rows.length === 0) {
+    const id = Number(req.params.id);
+    const contact = await prisma.contact.findUnique({
+      where: { id },
+    });
+    if (!contact) {
       res.status(404).json({ error: "Харилцагч олдсонгүй" });
       return;
     }
-    res.json(rows[0]);
+    res.json(contact);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -81,13 +81,12 @@ export const create = async (
       res.status(400).json({ error: "Нэр заавал бөглөнө." });
       return;
     }
-    const [result] = await db.query<any>(
-      "INSERT INTO contacts (name, email, phone, details) VALUES (?,?,?,?)",
-      [name, email || null, phone || null, details || null],
-    );
+    const contact = await prisma.contact.create({
+      data: { name, email, phone, details },
+    });
     res
       .status(201)
-      .json({ message: "Харилцагч амжилттай үүслээ!", id: result.insertId });
+      .json({ message: "Харилцагч амжилттай үүслээ!", id: contact.id });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -99,12 +98,12 @@ export const update = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { id } = req.params;
+    const id = Number(req.params.id);
     const { name, email, phone, details } = req.body;
-    await db.query(
-      "UPDATE contacts SET name=?, email=?, phone=?, details=? WHERE id=?",
-      [name, email || null, phone || null, details || null, id],
-    );
+    await prisma.contact.update({
+      where: { id },
+      data: { name, email, phone, details },
+    });
     res.json({ message: "Амжилттай шинэчлэгдлээ!" });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -117,8 +116,10 @@ export const remove = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { id } = req.params;
-    await db.query("DELETE FROM contacts WHERE id = ?", [id]);
+    const id = Number(req.params.id);
+    await prisma.contact.delete({
+      where: { id },
+    });
     res.json({ message: "Амжилттай устгагдлаа!" });
   } catch (err: any) {
     res.status(500).json({ error: err.message });

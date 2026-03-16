@@ -1,75 +1,40 @@
+import prisma from "../config/prisma";
 import type { Request, Response } from "express";
-import db from "../config/db";
 
-// Types
-interface CheckinItem {
-  id?: number;
-  name: string;
-  code: string;
-  weight: string;
-  quantity: string;
-}
-
-interface CheckinBody {
-  code: string;
-  date: string;
-  status?: "Draft" | "Completed" | "Pending";
-  contact: string;
-  warehouse: string;
-  user: string;
-  details: string;
-  items?: CheckinItem[];
-}
-
-interface GetAllQuery {
-  search?: string;
-  status?: "All" | "Draft" | "Non-Draft";
-  page?: string;
-  limit?: string;
-}
-
-// GET /api/checkins?search=&status=&page=1&limit=10
-export const getAll = async (
-  req: Request<{}, {}, {}, GetAllQuery>,
-  res: Response,
-): Promise<void> => {
+// GET /api/checkins
+export const getAll = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { search = "", status = "All", page = "1", limit = "10" } = req.query;
+    const {
+      search = "",
+      status = "All",
+      page = "1",
+      limit = "10",
+    } = req.query as any;
     const pageNum = Number(page);
     const limitNum = Number(limit);
-    const offset = (pageNum - 1) * limitNum;
 
-    let where = "WHERE 1=1";
-    const params: (string | number)[] = [];
+    const where: any = {};
 
     if (search) {
-      where += " AND (c.code LIKE ? OR c.contact LIKE ?)";
-      params.push(`%${search}%`, `%${search}%`);
+      where.OR = [
+        { code: { contains: search } },
+        { contact: { contains: search } },
+      ];
     }
 
-    if (status === "Draft") {
-      where += ` AND c.status = 'Draft'`;
-    } else if (status === "Non-Draft") {
-      where += ` AND c.status != 'Draft'`;
-    }
+    if (status === "Draft") where.status = "Draft";
+    else if (status === "Non-Draft") where.status = { not: "Draft" };
 
-    const [[{ total }]] = await db.query<any>(
-      `SELECT COUNT(*) as total FROM checkins c ${where}`,
-      params,
-    );
-
-    const [checkins] = await db.query<any[]>(
-      `SELECT * FROM checkins c ${where} ORDER BY c.created_at DESC LIMIT ? OFFSET ?`,
-      [...params, limitNum, offset],
-    );
-
-    for (const checkin of checkins) {
-      const [items] = await db.query<any[]>(
-        "SELECT * FROM checkin_items WHERE checkin_id = ?",
-        [checkin.id],
-      );
-      checkin.items = items;
-    }
+    const [total, checkins] = await prisma.$transaction([
+      prisma.checkin.count({ where }),
+      prisma.checkin.findMany({
+        where,
+        include: { items: true },
+        orderBy: { created_at: "desc" },
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+      }),
+    ]);
 
     res.json({ total, page: pageNum, limit: limitNum, data: checkins });
   } catch (err: any) {
@@ -83,20 +48,14 @@ export const getOne = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { id } = req.params;
-    const [rows] = await db.query<any[]>("SELECT * FROM checkins WHERE id = ?", [
-      id,
-    ]);
-    if (!rows || rows.length === 0) {
+    const checkin = await prisma.checkin.findUnique({
+      where: { id: Number(req.params.id) },
+      include: { items: true },
+    });
+    if (!checkin) {
       res.status(404).json({ error: "Орлого олдсонгүй" });
       return;
     }
-    const checkin = rows[0];
-    const [items] = await db.query<any[]>(
-      "SELECT * FROM checkin_items WHERE checkin_id = ?",
-      [id],
-    );
-    checkin.items = items || [];
     res.json(checkin);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -104,41 +63,29 @@ export const getOne = async (
 };
 
 // POST /api/checkins
-export const create = async (
-  req: Request<{}, {}, CheckinBody>,
-  res: Response,
-): Promise<void> => {
+export const create = async (req: Request, res: Response): Promise<void> => {
   try {
-    const {
-      code,
-      date,
-      status = "Draft",
-      contact,
-      warehouse,
-      user,
-      details,
-      items,
-    } = req.body;
+    const { code, date, status, contact, warehouse, user, details, items } =
+      req.body;
 
-    const [result] = await db.query<any>(
-      "INSERT INTO checkins (code, date, status, contact, warehouse, user, details) VALUES (?,?,?,?,?,?,?)",
-      [code, date, status, contact, warehouse, user, details],
-    );
-
-    const checkinId: number = result.insertId;
-
-    if (items && items.length > 0) {
-      for (const item of items) {
-        await db.query(
-          "INSERT INTO checkin_items (checkin_id, name, code, weight, quantity) VALUES (?,?,?,?,?)",
-          [checkinId, item.name, item.code, item.weight, item.quantity],
-        );
-      }
-    }
+    const checkin = await prisma.checkin.create({
+      data: {
+        code,
+        date: new Date(date),
+        status: status || "Draft",
+        contact,
+        warehouse,
+        user,
+        details,
+        items: {
+          create: items || [],
+        },
+      },
+    });
 
     res
       .status(201)
-      .json({ message: "Орлого амжилттай үүслээ!", id: checkinId });
+      .json({ message: "Орлого амжилттай үүслээ!", id: checkin.id });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -146,28 +93,30 @@ export const create = async (
 
 // PUT /api/checkins/:id
 export const update = async (
-  req: Request<{ id: string }, {}, CheckinBody>,
+  req: Request<{ id: string }>,
   res: Response,
 ): Promise<void> => {
   try {
-    const { id } = req.params;
+    const id = Number(req.params.id);
     const { code, date, status, contact, warehouse, user, details, items } =
       req.body;
 
-    await db.query(
-      "UPDATE checkins SET code=?, date=?, status=?, contact=?, warehouse=?, user=?, details=? WHERE id=?",
-      [code, date, status, contact, warehouse, user, details, id],
-    );
-
-    if (items) {
-      await db.query("DELETE FROM checkin_items WHERE checkin_id = ?", [id]);
-      for (const item of items) {
-        await db.query(
-          "INSERT INTO checkin_items (checkin_id, name, code, weight, quantity) VALUES (?,?,?,?,?)",
-          [id, item.name, item.code, item.weight, item.quantity],
-        );
-      }
-    }
+    await prisma.checkin.update({
+      where: { id },
+      data: {
+        code,
+        date: new Date(date),
+        status,
+        contact,
+        warehouse,
+        user,
+        details,
+        items: {
+          deleteMany: {},
+          create: items || [],
+        },
+      },
+    });
 
     res.json({ message: "Амжилттай шинэчлэгдлээ!" });
   } catch (err: any) {
@@ -181,9 +130,9 @@ export const remove = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { id } = req.params;
-    await db.query("DELETE FROM checkin_items WHERE checkin_id = ?", [id]);
-    await db.query("DELETE FROM checkins WHERE id = ?", [id]);
+    await prisma.checkin.delete({
+      where: { id: Number(req.params.id) },
+    });
     res.json({ message: "Амжилттай устгагдлаа!" });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
