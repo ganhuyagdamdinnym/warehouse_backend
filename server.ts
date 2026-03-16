@@ -2,8 +2,11 @@ import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import db from "./config/db";
-import checkinRouter from "./routes.ts/checkin";
 
+import checkinRouter from "./routes/checkin";
+import checkoutRouter from "./routes/checkout";
+import contactRouter from "./routes/contact";
+import warehouseRouter from "./routes/warehouse";
 dotenv.config();
 
 const app = express();
@@ -14,6 +17,9 @@ app.use(express.json());
 
 // Routes
 app.use("/api/checkins", checkinRouter);
+app.use("/api/checkouts", checkoutRouter);
+app.use("/api/contacts", contactRouter);
+app.use("/api/warehouses", warehouseRouter);
 
 // DB холболт шалгах
 db.getConnection()
