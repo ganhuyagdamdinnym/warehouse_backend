@@ -7,6 +7,7 @@ import checkinRouter from "./routes/checkin";
 import checkoutRouter from "./routes/checkout";
 import contactRouter from "./routes/contact";
 import warehouseRouter from "./routes/warehouse";
+import userRouter from "./routes/user";
 dotenv.config();
 
 const app = express();
@@ -20,6 +21,7 @@ app.use("/api/checkins", checkinRouter);
 app.use("/api/checkouts", checkoutRouter);
 app.use("/api/contacts", contactRouter);
 app.use("/api/warehouses", warehouseRouter);
+app.use("/api/users", userRouter);
 
 // DB холболт шалгах
 db.getConnection()

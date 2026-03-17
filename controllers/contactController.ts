@@ -8,17 +8,8 @@ interface ContactBody {
   details?: string;
 }
 
-interface GetAllQuery {
-  search?: string;
-  page?: string;
-  limit?: string;
-}
-
 // GET /api/contacts
-export const getAll = async (
-  req: Request<{}, {}, {}, GetAllQuery>,
-  res: Response,
-): Promise<void> => {
+export const getAll = async (req: Request, res: Response): Promise<void> => {
   try {
     const { search = "", page = "1", limit = "10" } = req.query as any;
     const pageNum = Number(page);

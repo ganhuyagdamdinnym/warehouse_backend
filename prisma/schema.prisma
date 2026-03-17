@@ -85,14 +85,38 @@ model Warehouse {
   @@map("warehouses")
 }
 
+model User{
+  id Int @id @default(autoincrement())
+  name String @db.VarChar(50)
+  userName String @db.VarChar(50)
+  email String? @unique @db.VarChar(50)
+  phone String? @db.VarChar(50)
+  warehouse String @db.VarChar(100)
+  password String @db.VarChar(100)
+  permission UserPermission @default(nothing)
+  superAdmin Boolean @default(false)
+    createdAt  DateTime       @default(now())
+  @@map("users")
+}
+
+enum UserPermission {
+ canView
+ canEdit
+ nothing
+}
+
 enum CheckinStatus {
   Draft
   Completed
   Pending
 }
 
+
+
 enum CheckoutStatus {
   Draft
   Completed
   Pending
 }
+
+

@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import db from "../config/db";
+import prisma from "../config/prisma";
 
 interface WarehouseBody {
   code: string;
@@ -17,56 +18,53 @@ interface GetAllQuery {
 }
 
 // GET /api/warehouses
-export const getAll = async (
-  req: Request<{}, {}, {}, GetAllQuery>,
-  res: Response,
-): Promise<void> => {
+export const getAll = async (req: Request, res: Response): Promise<void> => {
   try {
     const { search = "", page = "1", limit = "10" } = req.query;
     const pageNum = Number(page);
     const limitNum = Number(limit);
-    const offset = (pageNum - 1) * limitNum;
 
-    let where = "WHERE 1=1";
-    const params: (string | number)[] = [];
+    const where: any = {};
 
     if (search) {
-      where += " AND (code LIKE ? OR name LIKE ?)";
-      params.push(`%${search}%`, `%${search}%`);
+      where.OR = [
+        { code: { contains: search } },
+        { name: { contains: search } },
+      ];
     }
 
-    const [[{ total }]] = await db.query<any>(
-      `SELECT COUNT(*) as total FROM warehouses ${where}`,
-      params,
-    );
-
-    const [warehouses] = await db.query<any[]>(
-      `SELECT * FROM warehouses ${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`,
-      [...params, limitNum, offset],
-    );
+    const [total, warehouses] = await prisma.$transaction([
+      prisma.warehouse.count({ where }),
+      prisma.warehouse.findMany({
+        where,
+        orderBy: { created_at: "desc" },
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+      }),
+    ]);
 
     res.json({ total, page: pageNum, limit: limitNum, data: warehouses });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 };
-
 // GET /api/warehouses/:id
 export const getOne = async (
   req: Request<{ id: string }>,
   res: Response,
 ): Promise<void> => {
   try {
-    const { id } = req.params;
-    const [rows] = await db.query<any[]>(
-      "SELECT * FROM warehouses WHERE id = ?",
-      [id],
-    );
-    if (!rows || rows.length === 0) {
+    const id = Number(req.params.id);
+    const warehouse = await prisma.warehouse.findUnique({
+      where: { id },
+    });
+
+    if (!warehouse) {
       res.status(404).json({ error: "Агуулах олдсонгүй" });
       return;
     }
-    res.json(rows[0]);
+
+    res.status(201).json({ warehouse });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -83,13 +81,17 @@ export const create = async (
       res.status(400).json({ error: "Код болон нэр заавал бөглөнө." });
       return;
     }
-    const [result] = await db.query<any>(
-      "INSERT INTO warehouses (code, name, phone, email, address, is_active) VALUES (?,?,?,?,?,?)",
-      [code, name, phone || null, email || null, address || null, is_active],
-    );
+
+    const warehouse = await prisma.warehouse.create({
+      data: { name, code, email, phone, is_active, address },
+    });
+    // const [result] = await db.query<any>(
+    //   "INSERT INTO warehouses (code, name, phone, email, address, is_active) VALUES (?,?,?,?,?,?)",
+    //   [code, name, phone || null, email || null, address || null, is_active],
+    // );
     res
       .status(201)
-      .json({ message: "Агуулах амжилттай үүслээ!", id: result.insertId });
+      .json({ message: "Агуулах амжилттай үүслээ!", id: warehouse });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
@@ -101,20 +103,20 @@ export const update = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { id } = req.params;
+    const id = Number(req.params.id);
     const { code, name, phone, email, address, is_active } = req.body;
-    await db.query(
-      "UPDATE warehouses SET code=?, name=?, phone=?, email=?, address=?, is_active=? WHERE id=?",
-      [
+
+    await prisma.warehouse.update({
+      where: { id },
+      data: {
         code,
         name,
-        phone || null,
-        email || null,
-        address || null,
-        is_active ?? 1,
-        id,
-      ],
-    );
+        phone,
+        email,
+        address,
+        is_active,
+      },
+    });
     res.json({ message: "Амжилттай шинэчлэгдлээ!" });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -127,8 +129,11 @@ export const remove = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { id } = req.params;
-    await db.query("DELETE FROM warehouses WHERE id = ?", [id]);
+    const id = Number(req.params.id);
+    await prisma.warehouse.delete({
+      where: { id: id },
+    });
+
     res.json({ message: "Амжилттай устгагдлаа!" });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
