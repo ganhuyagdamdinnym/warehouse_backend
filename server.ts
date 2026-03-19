@@ -8,6 +8,8 @@ import checkoutRouter from "./routes/checkout";
 import contactRouter from "./routes/contact";
 import warehouseRouter from "./routes/warehouse";
 import userRouter from "./routes/user";
+import itemRouter from "./routes/items";
+
 dotenv.config();
 
 const app = express();
@@ -22,7 +24,7 @@ app.use("/api/checkouts", checkoutRouter);
 app.use("/api/contacts", contactRouter);
 app.use("/api/warehouses", warehouseRouter);
 app.use("/api/users", userRouter);
-
+app.use("/api/items", itemRouter);
 // DB холболт шалгах
 db.getConnection()
   .then(() => console.log("✅ MySQL холбогдлоо!"))

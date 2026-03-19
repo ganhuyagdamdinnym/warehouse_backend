@@ -99,6 +99,25 @@ model User{
   @@map("users")
 }
 
+model Item {
+  id           Int      @id @default(autoincrement())
+  name         String   @db.VarChar(100)
+  internalCode String?  @db.VarChar(50)
+  barcode      String?  @db.VarChar(50)
+  barcodeType  String?  @db.VarChar(20)
+  sku          String?  @db.VarChar(50)
+  category     String?  @db.VarChar(50)
+  unit         String?  @db.VarChar(20)
+  location     String?  @db.VarChar(50)
+  description  String?  @db.Text
+  image        String?  @db.VarChar(255)
+  trackStock   Boolean  @default(false)
+  stockAlert   Int?
+  createdAt    DateTime @default(now())
+
+  @@map("items")
+}
+
 enum UserPermission {
  canView
  canEdit
