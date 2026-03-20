@@ -117,6 +117,71 @@ model Item {
 
   @@map("items")
 }
+model Transfer {
+  id            Int            @id @default(autoincrement())
+  code          String         @unique @db.VarChar(20)
+  date          DateTime       @db.Date
+  status        TransferStatus @default(Draft)
+  fromWarehouse String         @db.VarChar(100)
+  toWarehouse   String         @db.VarChar(100)
+  user          String?        @db.VarChar(100)
+  details       String?        @db.Text
+  createdAt     DateTime       @default(now())
+  items         TransferItem[]
+
+  @@map("transfers")
+}
+
+model TransferItem {
+  id          Int      @id @default(autoincrement())
+  transfer_id Int
+  name        String?  @db.VarChar(100)
+  code        String?  @db.VarChar(50)
+  weight      String?  @db.VarChar(50)
+  quantity    String?  @db.VarChar(50)
+  unit        String?  @db.VarChar(50)
+  transfer    Transfer @relation(fields: [transfer_id], references: [id], onDelete: Cascade)
+
+  @@map("transfer_items")
+}
+model Unit {
+  id         Int      @id @default(autoincrement())
+  name       String   @db.VarChar(100)
+  code       String   @db.VarChar(20)
+  parentId   Int?
+  parent     Unit?    @relation("UnitParent", fields: [parentId], references: [id])
+  children   Unit[]   @relation("UnitParent")
+  createdAt  DateTime @default(now())
+
+  @@map("units")
+}
+
+// model Adjustment{
+//   id    Int     @id @default(autoincrement())
+//   reference String @db.VarChar(50)
+//   warehouse String  @db.VarChar(100)
+//   details  String?     @db.Text
+//   items  AdjustmentItem[]
+//   status  AdjustmentStatus @default(Draft)
+
+// }
+// model AdjustmentItem {
+//   id          Int      @id @default(autoincrement())
+//   adjustment_id Int
+//   name        String?  @db.VarChar(100)
+//   code        String?  @db.VarChar(50)
+//   weight      String?  @db.VarChar(50)
+//   quantity    String?  @db.VarChar(50)
+//   // Ad    Checkout @relation(fields: [adjustment_id], references: [id], onDelete: Cascade)
+
+//   @@map("checkout_items")
+// }
+
+enum TransferStatus {
+  Draft
+  Completed
+  Pending
+}
 
 enum UserPermission {
  canView
@@ -130,6 +195,11 @@ enum CheckinStatus {
   Pending
 }
 
+enum AdjustmentStatus {
+  Draft
+  Completed
+  Pending
+}
 
 
 enum CheckoutStatus {
