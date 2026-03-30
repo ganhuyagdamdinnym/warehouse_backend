@@ -1,5 +1,6 @@
 import type { Request, Response } from "express";
 import prisma from "../config/prisma";
+import bcrypt from "bcrypt";
 
 export const getAll = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -67,6 +68,7 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       permission,
     } = req.body;
 
+    // 1. Validation
     if (!name || !userName || !password || !warehouse) {
       res.status(400).json({
         message: "Нэр, хэрэглэгчийн нэр, нууц үг, агуулах заавал бөглөнө.",
@@ -74,11 +76,27 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       return;
     }
 
+    // 2. Check if user already exists
+    const existingUser = await prisma.user.findUnique({
+      where: { email },
+    });
+
+    if (existingUser) {
+      res.status(400).json({ message: "Хэрэглэгчийн нэр бүртгэлтэй байна." });
+      return;
+    }
+
+    // 3. Hash the password
+    // The "10" is the saltRounds, which determines the complexity/speed of the hash
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(password, salt);
+
+    // 4. Create the user with the hashed password
     const user = await prisma.user.create({
       data: {
         name,
         userName,
-        password,
+        password: hashedPassword, // Store the hash, not the plain text!
         email: email || null,
         phone: phone || null,
         warehouse,
@@ -87,14 +105,14 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       },
     });
 
-    res
-      .status(201)
-      .json({ message: "Хэрэглэгч амжилттай үүслээ!", id: user.id });
+    res.status(201).json({
+      message: "Хэрэглэгч амжилттай үүслээ!",
+      id: user.id,
+    });
   } catch (err: any) {
     res.status(500).json({ message: err.message });
   }
 };
-
 //update
 export const update = async (req: Request, res: Response): Promise<void> => {
   try {
