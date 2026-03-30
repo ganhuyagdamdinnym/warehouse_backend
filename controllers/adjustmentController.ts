@@ -1,10 +1,16 @@
 import prisma from "../config/prisma";
 import type { Request, Response } from "express";
 
-// GET /api/categories
+// GET /api/adjustments
 export const getAll = async (req: Request, res: Response): Promise<void> => {
+  console.log("test");
   try {
-    const { search = "", page = "1", limit = "10" } = req.query as any;
+    const {
+      search = "",
+      status = "All",
+      page = "1",
+      limit = "10",
+    } = req.query as any;
     const pageNum = Number(page);
     const limitNum = Number(limit);
 
@@ -12,92 +18,100 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
 
     if (search) {
       where.OR = [
-        { name: { contains: search } },
         { code: { contains: search } },
+        { contact: { contains: search } },
       ];
     }
 
-    const [total, categories] = await prisma.$transaction([
-      prisma.category.count({ where }),
-      prisma.category.findMany({
+    if (status === "Draft") where.status = "Draft";
+    else if (status === "Non-Draft") where.status = { not: "Draft" };
+
+    const [total, adjustments] = await prisma.$transaction([
+      prisma.adjustment.count({ where }),
+      prisma.adjustment.findMany({
         where,
-        include: {
-          parent: { select: { id: true, name: true } },
-          children: { select: { id: true, name: true } },
-        },
+        include: { items: true },
         orderBy: { created_at: "desc" },
         skip: (pageNum - 1) * limitNum,
         take: limitNum,
       }),
     ]);
 
-    res.json({ total, page: pageNum, limit: limitNum, data: categories });
+    res.json({ total, page: pageNum, limit: limitNum, data: adjustments });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// GET /api/categories/:id
+// GET /api/adjustments/:id
 export const getOne = async (
   req: Request<{ id: string }>,
   res: Response,
 ): Promise<void> => {
   try {
-    const category = await prisma.category.findUnique({
+    const adjustment = await prisma.adjustment.findUnique({
       where: { id: Number(req.params.id) },
-      include: {
-        parent: { select: { id: true, name: true } },
-        children: { select: { id: true, name: true } },
-      },
+      include: { items: true },
     });
-    if (!category) {
-      res.status(404).json({ error: "Ангилал олдсонгүй" });
+    if (!adjustment) {
+      res.status(404).json({ error: "Өөрчлөлт олдсонгүй" });
       return;
     }
-    res.json(category);
+    res.json(adjustment);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// POST /api/categories
+// POST /api/adjustments
 export const create = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { name, code, parentId } = req.body;
+    const { code, date, status, contact, warehouse, details, items } = req.body;
 
-    const category = await prisma.category.create({
+    const adjustment = await prisma.adjustment.create({
       data: {
-        name,
         code,
-        ...(parentId ? { parent: { connect: { id: Number(parentId) } } } : {}),
+        date: new Date(date),
+        status: status || "Draft",
+        contact,
+        warehouse,
+        details,
+        items: {
+          create: items || [],
+        },
       },
     });
 
     res
       .status(201)
-      .json({ message: "Ангилал амжилттай үүслээ!", id: category.id });
+      .json({ message: "Өөрчлөлт амжилттай үүслээ!", id: adjustment.id });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 };
 
-// PUT /api/categories/:id
+// PUT /api/adjustments/:id
 export const update = async (
   req: Request<{ id: string }>,
   res: Response,
 ): Promise<void> => {
   try {
     const id = Number(req.params.id);
-    const { name, code, parentId } = req.body;
+    const { code, date, status, contact, warehouse, details, items } = req.body;
 
-    await prisma.category.update({
+    await prisma.adjustment.update({
       where: { id },
       data: {
-        name,
         code,
-        parent: parentId
-          ? { connect: { id: Number(parentId) } }
-          : { disconnect: true },
+        date: new Date(date),
+        status,
+        contact,
+        warehouse,
+        details,
+        items: {
+          deleteMany: {},
+          create: items || [],
+        },
       },
     });
 
@@ -107,13 +121,13 @@ export const update = async (
   }
 };
 
-// DELETE /api/categories/:id
+// DELETE /api/adjustments/:id
 export const remove = async (
   req: Request<{ id: string }>,
   res: Response,
 ): Promise<void> => {
   try {
-    await prisma.category.delete({
+    await prisma.adjustment.delete({
       where: { id: Number(req.params.id) },
     });
     res.json({ message: "Амжилттай устгагдлаа!" });

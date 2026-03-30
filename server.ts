@@ -12,6 +12,9 @@ import itemRouter from "./routes/items";
 import transferRouter from "./routes/transfer";
 import unitRouter from "./routes/unit";
 import dashboardRouter from "./routes/dashboard";
+import adjustmentRouter from "./routes/adjustment";
+import categoryRouter from "./routes/category";
+import roleRouter from "./routes/role";
 
 dotenv.config();
 
@@ -30,7 +33,10 @@ app.use("/api/users", userRouter);
 app.use("/api/transfers", transferRouter);
 app.use("/api/items", itemRouter);
 app.use("/api/units", unitRouter);
-app.use("/api/totals", dashboardRouter);
+app.use("/api/dashboard", dashboardRouter);
+app.use("/api/adjustments", adjustmentRouter);
+app.use("/api/categories", categoryRouter);
+app.use("/api/roles", roleRouter);
 // DB холболт шалгах
 db.getConnection()
   .then(() => console.log("✅ MySQL холбогдлоо!"))
