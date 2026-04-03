@@ -1,7 +1,8 @@
-import type { Request, Response } from "express";
 import prisma from "../config/prisma";
+import type { Response } from "express";
+import type { AuthRequest } from "../middleware/autoMiddleware";
 
-// --- Helper: Stock Deduction (Exactly like Transfer) ---
+// ─── Сток хасах Helper ──────────────────────────────────────────────────
 const deductStock = async (
   tx: any,
   items: any[],
@@ -15,7 +16,6 @@ const deductStock = async (
 
     if (!itemId || qty <= 0) continue;
 
-    // 1. Check current warehouse stock
     const ws = await tx.warehouseStock.findUnique({
       where: { itemId_warehouseId: { itemId, warehouseId } },
     });
@@ -26,23 +26,21 @@ const deductStock = async (
       );
     }
 
-    // 2. Decrement warehouse stock
     await tx.warehouseStock.update({
       where: { itemId_warehouseId: { itemId, warehouseId } },
       data: { quantity: { decrement: qty } },
     });
 
-    // 3. Update Global Item Stock
     const aggregate = await tx.warehouseStock.aggregate({
       where: { itemId },
       _sum: { quantity: true },
     });
+
     await tx.item.update({
       where: { id: itemId },
       data: { stock: aggregate._sum.quantity || 0 },
     });
 
-    // 4. Create Movement Record
     await tx.stockMovement.create({
       data: {
         itemId,
@@ -57,7 +55,11 @@ const deductStock = async (
   }
 };
 
-export const create = async (req: Request, res: Response): Promise<void> => {
+// POST /api/checkouts
+export const create = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<void> => {
   try {
     const {
       code,
@@ -72,7 +74,6 @@ export const create = async (req: Request, res: Response): Promise<void> => {
     } = req.body;
 
     const result = await prisma.$transaction(async (tx) => {
-      // Create Checkout record
       const checkout = await tx.checkout.create({
         data: {
           code,
@@ -85,6 +86,7 @@ export const create = async (req: Request, res: Response): Promise<void> => {
           details,
           items: {
             create: (items || []).map((i: any) => ({
+              itemId: i.itemId,
               name: i.name,
               code: i.code,
               weight: String(i.weight),
@@ -94,21 +96,22 @@ export const create = async (req: Request, res: Response): Promise<void> => {
         },
       });
 
-      // If completed, deduct stock immediately
       if (status === "Completed") {
         await deductStock(tx, items, Number(warehouseId), checkout.id, code);
       }
+
       return checkout;
     });
 
-    res.status(201).json({ message: "Амжилттай!", id: result.id });
+    res.status(201).json({ message: "Амжилттай үүслээ!", id: result.id });
   } catch (err: any) {
     res.status(400).json({ error: err.message });
   }
 };
 
+// PUT /api/checkouts/:id
 export const update = async (
-  req: Request<{ id: string }>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
@@ -124,23 +127,38 @@ export const update = async (
       items,
     } = req.body;
 
+    const currentUser = req.user!;
+
     await prisma.$transaction(async (tx) => {
       const existing = await tx.checkout.findUnique({ where: { id } });
-      if (!existing) throw new Error("Олдсонгүй");
+      if (!existing) throw new Error("Зарлага олдсонгүй");
+
+      // SuperAdmin биш бол зөвхөн өөрийн агуулахын checkout засах
+      if (
+        !currentUser.superAdmin &&
+        existing.warehouse !== currentUser.warehouse
+      ) {
+        throw new Error("Та энэ зарлагыг засах эрхгүй байна");
+      }
+
+      if (existing.status === "Completed") {
+        throw new Error("Батлагдсан зарлагыг засах боломжгүй.");
+      }
 
       await tx.checkout.update({
         where: { id },
         data: {
           code,
+          date: new Date(date),
           status,
           contact,
           warehouse,
           details,
-          date: new Date(date),
           warehouseId: Number(warehouseId),
           items: {
             deleteMany: {},
             create: (items || []).map((i: any) => ({
+              itemId: i.itemId,
               name: i.name,
               code: i.code,
               weight: String(i.weight),
@@ -150,61 +168,131 @@ export const update = async (
         },
       });
 
-      if (existing.status !== "Completed" && status === "Completed") {
+      if (status === "Completed") {
         await deductStock(tx, items, Number(warehouseId), id, code);
       }
     });
-    res.json({ message: "Шинэчлэгдлээ" });
+
+    res.json({ message: "Амжилттай шинэчлэгдлээ!" });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 };
 
-export const getAll = async (req: Request, res: Response): Promise<void> => {
-  const {
-    search = "",
-    status = "All",
-    page = "1",
-    limit = "10",
-  } = req.query as any;
-  const where: any = {};
-  if (search)
-    where.OR = [
-      { code: { contains: search } },
-      { contact: { contains: search } },
-    ];
-  if (status !== "All") where.status = status;
+// GET /api/checkouts
+export const getAll = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const {
+      search = "",
+      status = "All",
+      page = "1",
+      limit = "10",
+    } = req.query as any;
 
-  const [total, data] = await prisma.$transaction([
-    prisma.checkout.count({ where }),
-    prisma.checkout.findMany({
-      where,
-      include: { items: true },
-      orderBy: { created_at: "desc" },
-      skip: (Number(page) - 1) * Number(limit),
-      take: Number(limit),
-    }),
-  ]);
-  res.json({ total, data });
+    const pageNum = Number(page);
+    const limitNum = Number(limit);
+    const currentUser = req.user!;
+
+    const where: any = {};
+
+    // ── Warehouse шүүлт ──────────────────────────────
+    if (!currentUser.superAdmin) {
+      where.warehouse = currentUser.warehouse;
+    }
+
+    // ── Хайлт ────────────────────────────────────────
+    if (search) {
+      where.OR = [
+        { code: { contains: search } },
+        { contact: { contains: search } },
+      ];
+    }
+
+    // ── Статус шүүлт ─────────────────────────────────
+    if (status !== "All") where.status = status;
+
+    const [total, data] = await prisma.$transaction([
+      prisma.checkout.count({ where }),
+      prisma.checkout.findMany({
+        where,
+        include: { items: true },
+        orderBy: { created_at: "desc" },
+        skip: (pageNum - 1) * limitNum,
+        take: limitNum,
+      }),
+    ]);
+
+    res.json({ total, page: pageNum, limit: limitNum, data });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
+// GET /api/checkouts/:id
 export const getOne = async (
-  req: Request<{ id: string }>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
-  const checkout = await prisma.checkout.findUnique({
-    where: { id: Number(req.params.id) },
-    include: { items: true },
-  });
-  checkout
-    ? res.json({ checkout })
-    : res.status(404).json({ error: "NotFound" });
+  try {
+    const currentUser = req.user!;
+
+    const checkout = await prisma.checkout.findUnique({
+      where: { id: Number(req.params.id) },
+      include: { items: true },
+    });
+
+    if (!checkout) {
+      res.status(404).json({ error: "Зарлага олдсонгүй" });
+      return;
+    }
+
+    // SuperAdmin биш бол зөвхөн өөрийн агуулахын checkout харах
+    if (
+      !currentUser.superAdmin &&
+      checkout.warehouse !== currentUser.warehouse
+    ) {
+      res.status(403).json({ error: "Та энэ зарлагыг харах эрхгүй байна" });
+      return;
+    }
+
+    res.json({ checkout });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
+// DELETE /api/checkouts/:id
 export const remove = async (
-  req: Request<{ id: string }>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
-  await prisma.checkout.delete({ where: { id: Number(req.params.id) } });
-  res.json({ message: "Устгагдлаа" });
+  try {
+    const currentUser = req.user!;
+
+    const checkout = await prisma.checkout.findUnique({
+      where: { id: Number(req.params.id) },
+    });
+
+    if (!checkout) {
+      res.status(404).json({ error: "Зарлага олдсонгүй" });
+      return;
+    }
+
+    // SuperAdmin биш бол зөвхөн өөрийн агуулахын checkout устгах
+    if (
+      !currentUser.superAdmin &&
+      checkout.warehouse !== currentUser.warehouse
+    ) {
+      res.status(403).json({ error: "Та энэ зарлагыг устгах эрхгүй байна" });
+      return;
+    }
+
+    await prisma.checkout.delete({ where: { id: Number(req.params.id) } });
+    res.json({ message: "Амжилттай устгагдлаа!" });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
 };

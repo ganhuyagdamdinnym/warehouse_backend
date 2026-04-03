@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { authMiddleware } from "../middleware/autoMiddleware";
 import {
   getAll,
   getOne,
@@ -9,9 +10,9 @@ import {
 
 const checkoutRouter = Router();
 
-checkoutRouter.get("/", getAll);
+checkoutRouter.get("/", authMiddleware, getAll);
 checkoutRouter.get("/:id", getOne);
-checkoutRouter.post("/", create);
+checkoutRouter.post("/", authMiddleware, create);
 checkoutRouter.put("/:id", update);
 checkoutRouter.delete("/:id", remove);
 

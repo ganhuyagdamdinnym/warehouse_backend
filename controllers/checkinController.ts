@@ -1,5 +1,6 @@
 import prisma from "../config/prisma";
-import type { Request, Response } from "express";
+import type { Response } from "express";
+import type { AuthRequest } from "../middleware/autoMiddleware";
 
 // ─── Сток нэмэх Helper ──────────────────────────────────────────────────
 const addStock = async (
@@ -11,7 +12,6 @@ const addStock = async (
     const qty = Number(item.quantity);
     if (isNaN(qty) || qty <= 0) continue;
 
-    // 1. Агуулах дахь стокийн мэдээлэл (upsert ашиглаж болно, гэхдээ findUnique илүү тодорхой)
     const existing = await tx.warehouseStock.findUnique({
       where: {
         itemId_warehouseId: {
@@ -36,13 +36,11 @@ const addStock = async (
       });
     }
 
-    // 2. Ерөнхий Item-ийн нийт стокийг нэмэх
     await tx.item.update({
       where: { id: Number(item.productId) },
       data: { stock: { increment: qty } },
     });
 
-    // 3. Хөдөлгөөний түүх бүртгэх
     await tx.stockMovement.create({
       data: {
         itemId: Number(item.productId),
@@ -56,7 +54,10 @@ const addStock = async (
 };
 
 // POST /api/checkins
-export const create = async (req: Request, res: Response): Promise<void> => {
+export const create = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<void> => {
   try {
     const {
       code,
@@ -69,9 +70,8 @@ export const create = async (req: Request, res: Response): Promise<void> => {
       details,
       items,
     } = req.body;
-
+    console.log("create", req.body);
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Орлогын баримт үүсгэх
       const checkin = await tx.checkin.create({
         data: {
           code,
@@ -83,6 +83,7 @@ export const create = async (req: Request, res: Response): Promise<void> => {
           details,
           items: {
             create: (items || []).map((item: any) => ({
+              itemId: item.itemId,
               name: item.name,
               code: item.code,
               weight: String(item.weight),
@@ -92,7 +93,6 @@ export const create = async (req: Request, res: Response): Promise<void> => {
         },
       });
 
-      // 2. Хэрэв "Completed" бол стокт нөлөөлнө
       if (status === "Completed" && warehouseId) {
         await addStock(tx, items, Number(warehouseId));
       }
@@ -109,7 +109,7 @@ export const create = async (req: Request, res: Response): Promise<void> => {
 
 // PUT /api/checkins/:id
 export const update = async (
-  req: Request<{ id: string }>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
@@ -126,11 +126,20 @@ export const update = async (
       items,
     } = req.body;
 
+    const currentUser = req.user!;
+
     await prisma.$transaction(async (tx) => {
       const existing = await tx.checkin.findUnique({ where: { id } });
       if (!existing) throw new Error("Орлого олдсонгүй");
 
-      // Хэрэв өмнө нь Completed байсан бол дахиж Сток нэмэхгүй байх хамгаалалт
+      // SuperAdmin биш бол зөвхөн өөрийн агуулахын checkin-г засах боломжтой
+      if (
+        !currentUser.superAdmin &&
+        existing.warehouse !== currentUser.warehouse
+      ) {
+        throw new Error("Та энэ орлогыг засах эрхгүй байна");
+      }
+
       if (existing.status === "Completed") {
         throw new Error("Батлагдсан орлогыг засах боломжгүй.");
       }
@@ -148,6 +157,7 @@ export const update = async (
           items: {
             deleteMany: {},
             create: (items || []).map((item: any) => ({
+              itemId: item.itemId,
               name: item.name,
               code: item.code,
               weight: String(item.weight),
@@ -169,7 +179,10 @@ export const update = async (
 };
 
 // GET /api/checkins
-export const getAll = async (req: Request, res: Response): Promise<void> => {
+export const getAll = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<void> => {
   try {
     const {
       search = "",
@@ -177,11 +190,24 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
       page = "1",
       limit = "10",
     } = req.query as any;
+    // console.log("hi al l", req.user);
     const pageNum = Number(page);
     const limitNum = Number(limit);
+    const currentUser = req.user!;
 
     const where: any = {};
+    if (!req.user) {
+      console.log("АЛДАА: req.user олдсонгүй!");
+      res.status(401).json({ error: "Хэрэглэгч нэвтрээгүй байна" });
+      return;
+    }
+    // console.log("checck", currentUser.superAdmin);
+    // ── Warehouse шүүлт ──────────────────────────────
+    if (!currentUser.superAdmin) {
+      where.warehouse = currentUser.warehouse;
+    }
 
+    // ── Хайлт ────────────────────────────────────────
     if (search) {
       where.OR = [
         { code: { contains: search } },
@@ -189,6 +215,7 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
       ];
     }
 
+    // ── Статус шүүлт ─────────────────────────────────
     if (status === "Draft") where.status = "Draft";
     else if (status === "Non-Draft") where.status = { not: "Draft" };
 
@@ -211,18 +238,31 @@ export const getAll = async (req: Request, res: Response): Promise<void> => {
 
 // GET /api/checkins/:id
 export const getOne = async (
-  req: Request<{ id: string }>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
+    const currentUser = req.user!;
+
     const checkin = await prisma.checkin.findUnique({
       where: { id: Number(req.params.id) },
       include: { items: true },
     });
+
     if (!checkin) {
       res.status(404).json({ error: "Орлого олдсонгүй" });
       return;
     }
+
+    // SuperAdmin биш бол зөвхөн өөрийн агуулахын checkin-г харах боломжтой
+    if (
+      !currentUser.superAdmin &&
+      checkin.warehouse !== currentUser.warehouse
+    ) {
+      res.status(403).json({ error: "Та энэ орлогыг харах эрхгүй байна" });
+      return;
+    }
+
     res.json(checkin);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -231,13 +271,31 @@ export const getOne = async (
 
 // DELETE /api/checkins/:id
 export const remove = async (
-  req: Request<{ id: string }>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
-    await prisma.checkin.delete({
+    const currentUser = req.user!;
+
+    const checkin = await prisma.checkin.findUnique({
       where: { id: Number(req.params.id) },
     });
+
+    if (!checkin) {
+      res.status(404).json({ error: "Орлого олдсонгүй" });
+      return;
+    }
+
+    // SuperAdmin биш бол зөвхөн өөрийн агуулахын checkin-г устгах боломжтой
+    if (
+      !currentUser.superAdmin &&
+      checkin.warehouse !== currentUser.warehouse
+    ) {
+      res.status(403).json({ error: "Та энэ орлогыг устгах эрхгүй байна" });
+      return;
+    }
+
+    await prisma.checkin.delete({ where: { id: Number(req.params.id) } });
     res.json({ message: "Амжилттай устгагдлаа!" });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
