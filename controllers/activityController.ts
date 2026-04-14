@@ -1,17 +1,30 @@
 import prisma from "../config/prisma";
-import type { Request, Response } from "express";
+import type { Response } from "express";
+import type { AuthRequest } from "../middleware/autoMiddleware";
 
-// GET /api/dashboard/activity
 export const getRecentActivity = async (
-  req: Request,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
+    if (!req.user) {
+      res.status(401).json({ error: "Нэвтрээгүй байна" });
+      return;
+    }
+
     const limit = Number(req.query.limit ?? 5);
+    const currentUser = req.user;
+    const isSuperAdmin = currentUser.superAdmin;
+
+    // ── Warehouse шүүлт ──────────────────────────────
+    const warehouseFilter = isSuperAdmin
+      ? {}
+      : { warehouse: currentUser.warehouse };
 
     const [checkins, checkouts, adjustments] = await prisma.$transaction([
       prisma.checkin.findMany({
         take: limit,
+        where: warehouseFilter,
         orderBy: { created_at: "desc" },
         select: {
           id: true,
@@ -24,6 +37,7 @@ export const getRecentActivity = async (
       }),
       prisma.checkout.findMany({
         take: limit,
+        where: warehouseFilter,
         orderBy: { created_at: "desc" },
         select: {
           id: true,
@@ -36,6 +50,7 @@ export const getRecentActivity = async (
       }),
       prisma.adjustment.findMany({
         take: limit,
+        where: warehouseFilter,
         orderBy: { created_at: "desc" },
         select: {
           id: true,
@@ -90,9 +105,8 @@ export const getRecentActivity = async (
       (a, b) =>
         new Date(b.created_at).getTime() - new Date(a.created_at).getTime(),
     );
-    const result = activity.slice(0, limit);
 
-    res.json({ data: result });
+    res.json({ data: activity.slice(0, limit) });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

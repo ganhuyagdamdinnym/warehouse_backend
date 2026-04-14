@@ -11,9 +11,9 @@ import {
 const checkoutRouter = Router();
 
 checkoutRouter.get("/", authMiddleware, getAll);
-checkoutRouter.get("/:id", getOne);
+checkoutRouter.get("/:id", authMiddleware, getOne);
 checkoutRouter.post("/", authMiddleware, create);
-checkoutRouter.put("/:id", update);
-checkoutRouter.delete("/:id", remove);
+checkoutRouter.put("/:id", authMiddleware, update);
+checkoutRouter.delete("/:id", authMiddleware, remove);
 
 export default checkoutRouter;

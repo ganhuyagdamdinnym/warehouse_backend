@@ -1,12 +1,11 @@
-import type { Request, Response } from "express";
+import type { Response } from "express";
 import prisma from "../config/prisma";
-
-// ─── Interfaces ───────────────────────────────────────────────────────────────
+import type { AuthRequest } from "../middleware/autoMiddleware";
 
 interface TransferItemBody {
-  itemId: number; // Schema-тай нийцүүлж ID-аар авна
+  itemId: number;
   name?: string;
-  code?: string; // internalCode
+  code?: string;
   weight?: string;
   quantity: string | number;
   unit?: string;
@@ -16,8 +15,8 @@ interface TransferBody {
   code: string;
   date: string;
   status?: "Draft" | "Completed" | "Pending";
-  fromWarehouseId: number; // ID-аар авна
-  toWarehouseId: number; // ID-аар авна
+  fromWarehouseId: number;
+  toWarehouseId: number;
   user?: string;
   details?: string;
   items: TransferItemBody[];
@@ -30,7 +29,7 @@ interface GetAllQuery {
   limit?: string;
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Helper ───────────────────────────────────────────────────────────────────
 
 async function applyTransferStock(
   tx: any,
@@ -43,10 +42,8 @@ async function applyTransferStock(
   for (const itemData of items) {
     const qty = Number(itemData.quantity) || 0;
     const itemId = itemData.itemId;
-
     if (qty <= 0 || !itemId) continue;
 
-    // 1. ГАРАХ АГУУЛАХ: Үлдэгдэл байгаа эсэхийг шалгах
     const sourceStock = await tx.warehouseStock.findUnique({
       where: { itemId_warehouseId: { itemId, warehouseId: fromWarehouseId } },
     });
@@ -57,20 +54,17 @@ async function applyTransferStock(
       );
     }
 
-    // 2. ГАРАХ АГУУЛАХ: Үлдэгдэл хасах
     await tx.warehouseStock.update({
       where: { itemId_warehouseId: { itemId, warehouseId: fromWarehouseId } },
       data: { quantity: { decrement: qty } },
     });
 
-    // 3. ОРОХ АГУУЛАХ: Үлдэгдэл нэмэх (Байхгүй бол шинээр үүсгэнэ)
     await tx.warehouseStock.upsert({
       where: { itemId_warehouseId: { itemId, warehouseId: toWarehouseId } },
       update: { quantity: { increment: qty } },
       create: { itemId, warehouseId: toWarehouseId, quantity: qty },
     });
 
-    // 4. STOCK MOVEMENT: Түүх бүртгэх (Оролт, Гаралт)
     await tx.stockMovement.createMany({
       data: [
         {
@@ -94,7 +88,6 @@ async function applyTransferStock(
       ],
     });
 
-    // 5. НИЙТ ҮЛДЭГДЭЛ (Item.stock): Бүх агуулахын нийлбэрийг шинэчлэх
     const aggregate = await tx.warehouseStock.aggregate({
       where: { itemId },
       _sum: { quantity: true },
@@ -107,28 +100,57 @@ async function applyTransferStock(
   }
 }
 
+// ─── Warehouse ID-аар нэр олох helper ────────────────────────────────────────
+
+async function getWarehouseIdByName(name: string): Promise<number | null> {
+  const wh = await prisma.warehouse.findFirst({ where: { name } });
+  return wh ? wh.id : null;
+}
+
 // ─── Controllers ──────────────────────────────────────────────────────────────
 
+// GET /api/transfers
 export const getAll = async (
-  req: Request<{}, {}, {}, GetAllQuery>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
-    const { search = "", status = "All", page = "1", limit = "10" } = req.query;
+    const {
+      search = "",
+      status = "All",
+      page = "1",
+      limit = "10",
+    } = req.query as GetAllQuery;
     const pageNum = Number(page);
     const limitNum = Number(limit);
+    const currentUser = req.user!;
 
     const where: any = {};
+
+    if (!currentUser.superAdmin) {
+      const warehouseId = await getWarehouseIdByName(currentUser.warehouse);
+      if (warehouseId) {
+        where.OR = [
+          { fromWarehouseId: warehouseId },
+          { toWarehouseId: warehouseId },
+        ];
+      }
+    }
+
     if (search) {
-      where.OR = [
-        { code: { contains: search } },
-        { fromWarehouse: { name: { contains: search } } },
-        { toWarehouse: { name: { contains: search } } },
+      where.AND = [
+        ...(where.AND || []),
+        {
+          OR: [
+            { code: { contains: search } },
+            { fromWarehouse: { name: { contains: search } } },
+            { toWarehouse: { name: { contains: search } } },
+          ],
+        },
       ];
     }
-    if (status !== "All") {
-      where.status = status;
-    }
+
+    if (status !== "All") where.status = status;
 
     const [total, transfers] = await prisma.$transaction([
       prisma.transfer.count({ where }),
@@ -151,11 +173,14 @@ export const getAll = async (
   }
 };
 
+// GET /api/transfers/:id
 export const getOne = async (
-  req: Request<{ id: string }>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
+    const currentUser = req.user!;
+
     const transfer = await prisma.transfer.findUnique({
       where: { id: Number(req.params.id) },
       include: {
@@ -164,22 +189,37 @@ export const getOne = async (
         toWarehouse: true,
       },
     });
+
     if (!transfer) {
       res.status(404).json({ error: "Шилжүүлэг олдсонгүй" });
       return;
     }
+
+    if (!currentUser.superAdmin) {
+      const warehouseId = await getWarehouseIdByName(currentUser.warehouse);
+      if (
+        transfer.fromWarehouseId !== warehouseId &&
+        transfer.toWarehouseId !== warehouseId
+      ) {
+        res
+          .status(403)
+          .json({ error: "Та энэ шилжүүлгийг харах эрхгүй байна" });
+        return;
+      }
+    }
+
     res.json(transfer);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 };
 
+// POST /api/transfers
 export const create = async (
-  req: Request<{}, {}, TransferBody>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
-    console.log("transfer create check");
     const {
       code,
       date,
@@ -188,7 +228,9 @@ export const create = async (
       toWarehouseId,
       items,
       ...rest
-    } = req.body;
+    } = req.body as TransferBody;
+
+    const currentUser = req.user!;
 
     if (!code || !date || !fromWarehouseId || !toWarehouseId) {
       res.status(400).json({
@@ -197,8 +239,17 @@ export const create = async (
       return;
     }
 
+    if (!currentUser.superAdmin) {
+      const warehouseId = await getWarehouseIdByName(currentUser.warehouse);
+      if (Number(fromWarehouseId) !== warehouseId) {
+        res.status(403).json({
+          error: "Та зөвхөн өөрийн агуулахаас шилжүүлэг үүсгэх боломжтой",
+        });
+        return;
+      }
+    }
+
     const result = await prisma.$transaction(async (tx) => {
-      // 1. Transfer үүсгэх
       const created = await tx.transfer.create({
         data: {
           code,
@@ -221,13 +272,12 @@ export const create = async (
         },
       });
 
-      // 2. Хэрэв шууд Completed бол үлдэгдэл хөдөлгөх
       if (status === "Completed") {
         await applyTransferStock(
           tx,
           items,
-          fromWarehouseId,
-          toWarehouseId,
+          Number(fromWarehouseId),
+          Number(toWarehouseId),
           created.id,
           code,
         );
@@ -242,8 +292,9 @@ export const create = async (
   }
 };
 
+// PUT /api/transfers/:id
 export const update = async (
-  req: Request<{ id: string }, {}, TransferBody>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
@@ -256,15 +307,60 @@ export const update = async (
       code,
       date,
       ...rest
-    } = req.body;
+    } = req.body as TransferBody;
+    const currentUser = req.user!;
 
     await prisma.$transaction(async (tx) => {
       const existing = await tx.transfer.findUnique({
         where: { id },
-        select: { status: true },
+        select: {
+          status: true,
+          fromWarehouseId: true,
+          toWarehouseId: true,
+          code: true,
+        },
       });
 
-      // 1. Мэдээллийг шинэчлэх
+      if (!existing) throw new Error("Шилжүүлэг олдсонгүй");
+
+      if (existing.status === "Completed") {
+        throw new Error("Батлагдсан шилжүүлгийг засах боломжгүй.");
+      }
+
+      // ── Эрх шалгах (superAdmin-аас бусад) ────────────────────────
+      if (!currentUser.superAdmin) {
+        const userWarehouseId = await getWarehouseIdByName(
+          currentUser.warehouse,
+        );
+
+        const isFromOwner = existing.fromWarehouseId === userWarehouseId;
+        const isToOwner = existing.toWarehouseId === userWarehouseId;
+
+        // Огт холбоогүй хэрэглэгч
+        if (!isFromOwner && !isToOwner) {
+          throw new Error("Та энэ шилжүүлгийг засах эрхгүй байна");
+        }
+
+        // Draft → Pending: зөвхөн гарах агуулахын эзэн хийж болно
+        if (existing.status === "Draft" && status === "Pending") {
+          if (!isFromOwner) {
+            throw new Error(
+              "Зөвхөн гарах агуулахын эзэн шилжүүлгийг баталгаажуулах боломжтой",
+            );
+          }
+        }
+
+        // Pending → Completed: зөвхөн орох агуулахын эзэн хийж болно
+        if (existing.status === "Pending" && status === "Completed") {
+          if (!isToOwner) {
+            throw new Error(
+              "Зөвхөн орох агуулахын эзэн шилжүүлгийг дуусгах боломжтой",
+            );
+          }
+        }
+      }
+      // ─────────────────────────────────────────────────────────────
+
       await tx.transfer.update({
         where: { id },
         data: {
@@ -289,13 +385,12 @@ export const update = async (
         },
       });
 
-      // 2. Draft/Pending-ээс Completed рүү анх удаа шилжих үед үлдэгдэл хөдөлгөх
-      if (status === "Completed" && existing?.status !== "Completed") {
+      if (status === "Completed") {
         await applyTransferStock(
           tx,
           items,
-          fromWarehouseId,
-          toWarehouseId,
+          Number(fromWarehouseId),
+          Number(toWarehouseId),
           id,
           code,
         );
@@ -308,11 +403,37 @@ export const update = async (
   }
 };
 
+// DELETE /api/transfers/:id
 export const remove = async (
-  req: Request<{ id: string }>,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
+    const currentUser = req.user!;
+
+    const transfer = await prisma.transfer.findUnique({
+      where: { id: Number(req.params.id) },
+      select: { fromWarehouseId: true, toWarehouseId: true },
+    });
+
+    if (!transfer) {
+      res.status(404).json({ error: "Шилжүүлэг олдсонгүй" });
+      return;
+    }
+
+    if (!currentUser.superAdmin) {
+      const warehouseId = await getWarehouseIdByName(currentUser.warehouse);
+      if (
+        transfer.fromWarehouseId !== warehouseId &&
+        transfer.toWarehouseId !== warehouseId
+      ) {
+        res
+          .status(403)
+          .json({ error: "Та энэ шилжүүлгийг устгах эрхгүй байна" });
+        return;
+      }
+    }
+
     await prisma.transfer.delete({ where: { id: Number(req.params.id) } });
     res.json({ message: "Устгагдлаа" });
   } catch (err: any) {

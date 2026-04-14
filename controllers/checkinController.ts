@@ -5,45 +5,57 @@ import type { AuthRequest } from "../middleware/autoMiddleware";
 // ─── Сток нэмэх Helper ──────────────────────────────────────────────────
 const addStock = async (
   tx: any,
-  items: { productId: number; quantity: number | string; name: string }[],
+  items: {
+    itemId?: number;
+    productId?: number;
+    quantity: number | string | null;
+    name?: string | null;
+  }[],
   warehouseId: number,
 ) => {
   for (const item of items) {
+    // itemId эсвэл productId аль нэгийг ашиглана
+    const resolvedItemId = Number(item.itemId || item.productId);
     const qty = Number(item.quantity);
-    if (isNaN(qty) || qty <= 0) continue;
 
-    const existing = await tx.warehouseStock.findUnique({
+    if (!resolvedItemId || isNaN(qty) || qty <= 0) {
+      console.warn("addStock: itemId олдсонгүй эсвэл тоо буруу", item);
+      continue;
+    }
+
+    console.log(
+      `addStock: itemId=${resolvedItemId}, qty=${qty}, warehouseId=${warehouseId}`,
+    );
+
+    await tx.warehouseStock.upsert({
       where: {
         itemId_warehouseId: {
-          itemId: Number(item.productId),
+          itemId: resolvedItemId,
           warehouseId: Number(warehouseId),
         },
       },
+      update: { quantity: { increment: qty } },
+      create: {
+        itemId: resolvedItemId,
+        warehouseId: Number(warehouseId),
+        quantity: qty,
+      },
     });
 
-    if (existing) {
-      await tx.warehouseStock.update({
-        where: { id: existing.id },
-        data: { quantity: { increment: qty } },
-      });
-    } else {
-      await tx.warehouseStock.create({
-        data: {
-          itemId: Number(item.productId),
-          warehouseId: Number(warehouseId),
-          quantity: qty,
-        },
-      });
-    }
+    // Item-ийн нийт сток бүх агуулахаас нийлбэрлэн шинэчлэх
+    const aggregate = await tx.warehouseStock.aggregate({
+      where: { itemId: resolvedItemId },
+      _sum: { quantity: true },
+    });
 
     await tx.item.update({
-      where: { id: Number(item.productId) },
-      data: { stock: { increment: qty } },
+      where: { id: resolvedItemId },
+      data: { stock: aggregate._sum.quantity || 0 },
     });
 
     await tx.stockMovement.create({
       data: {
-        itemId: Number(item.productId),
+        itemId: resolvedItemId,
         type: "CHECKIN",
         quantity: qty,
         warehouseTo: String(warehouseId),
@@ -70,13 +82,26 @@ export const create = async (
       details,
       items,
     } = req.body;
-    console.log("create", req.body);
+    const currentUser = req.user!;
+
+    console.log("checkin create body:", JSON.stringify(req.body, null, 2));
+
+    if (!currentUser.superAdmin && warehouse !== currentUser.warehouse) {
+      res.status(403).json({
+        error: "Та зөвхөн өөрийн агуулахад орлого үүсгэх боломжтой",
+      });
+      return;
+    }
+
+    const checkinStatus: "Draft" | "Completed" =
+      status === "Completed" ? "Completed" : "Draft";
+
     const result = await prisma.$transaction(async (tx) => {
       const checkin = await tx.checkin.create({
         data: {
           code,
           date: new Date(date),
-          status: status || "Draft",
+          status: checkinStatus,
           contact,
           warehouse,
           user,
@@ -91,10 +116,13 @@ export const create = async (
             })),
           },
         },
+        include: { items: true }, // ← DB-д хадгалагдсан items-ийг буцааж авна
       });
 
-      if (status === "Completed" && warehouseId) {
-        await addStock(tx, items, Number(warehouseId));
+      if (checkinStatus === "Completed" && warehouseId) {
+        console.log("Completing checkin, warehouseId:", warehouseId);
+        // req.body items биш checkin.items ашиглана — itemId баталгаатай байна
+        await addStock(tx, checkin.items, Number(warehouseId));
       }
 
       return checkin;
@@ -102,7 +130,7 @@ export const create = async (
 
     res.status(201).json({ message: "Амжилттай үүслээ!", id: result.id });
   } catch (err: any) {
-    console.error(err);
+    console.error("checkin create error:", err);
     res.status(400).json({ error: err.message });
   }
 };
@@ -126,13 +154,16 @@ export const update = async (
       items,
     } = req.body;
 
+    console.log("checkin update body:", JSON.stringify(req.body, null, 2));
+
     const currentUser = req.user!;
+    const checkinStatus: "Draft" | "Completed" =
+      status === "Completed" ? "Completed" : "Draft";
 
     await prisma.$transaction(async (tx) => {
       const existing = await tx.checkin.findUnique({ where: { id } });
       if (!existing) throw new Error("Орлого олдсонгүй");
 
-      // SuperAdmin биш бол зөвхөн өөрийн агуулахын checkin-г засах боломжтой
       if (
         !currentUser.superAdmin &&
         existing.warehouse !== currentUser.warehouse
@@ -144,12 +175,12 @@ export const update = async (
         throw new Error("Батлагдсан орлогыг засах боломжгүй.");
       }
 
-      await tx.checkin.update({
+      const updated = await tx.checkin.update({
         where: { id },
         data: {
           code,
           date: new Date(date),
-          status,
+          status: checkinStatus,
           contact,
           warehouse,
           user,
@@ -165,15 +196,19 @@ export const update = async (
             })),
           },
         },
+        include: { items: true }, // ← DB-д хадгалагдсан items-ийг буцааж авна
       });
 
-      if (status === "Completed" && warehouseId) {
-        await addStock(tx, items, Number(warehouseId));
+      if (checkinStatus === "Completed" && warehouseId) {
+        console.log("Completing checkin update, warehouseId:", warehouseId);
+        // updated.items ашиглана — itemId баталгаатай байна
+        await addStock(tx, updated.items, Number(warehouseId));
       }
     });
 
     res.json({ message: "Амжилттай шинэчлэгдлээ!" });
   } catch (err: any) {
+    console.error("checkin update error:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -190,24 +225,22 @@ export const getAll = async (
       page = "1",
       limit = "10",
     } = req.query as any;
-    // console.log("hi al l", req.user);
+
     const pageNum = Number(page);
     const limitNum = Number(limit);
     const currentUser = req.user!;
 
-    const where: any = {};
     if (!req.user) {
-      console.log("АЛДАА: req.user олдсонгүй!");
       res.status(401).json({ error: "Хэрэглэгч нэвтрээгүй байна" });
       return;
     }
-    // console.log("checck", currentUser.superAdmin);
-    // ── Warehouse шүүлт ──────────────────────────────
+
+    const where: any = {};
+
     if (!currentUser.superAdmin) {
       where.warehouse = currentUser.warehouse;
     }
 
-    // ── Хайлт ────────────────────────────────────────
     if (search) {
       where.OR = [
         { code: { contains: search } },
@@ -215,9 +248,8 @@ export const getAll = async (
       ];
     }
 
-    // ── Статус шүүлт ─────────────────────────────────
     if (status === "Draft") where.status = "Draft";
-    else if (status === "Non-Draft") where.status = { not: "Draft" };
+    else if (status === "Completed") where.status = "Completed";
 
     const [total, checkins] = await prisma.$transaction([
       prisma.checkin.count({ where }),
@@ -254,7 +286,6 @@ export const getOne = async (
       return;
     }
 
-    // SuperAdmin биш бол зөвхөн өөрийн агуулахын checkin-г харах боломжтой
     if (
       !currentUser.superAdmin &&
       checkin.warehouse !== currentUser.warehouse
@@ -286,7 +317,6 @@ export const remove = async (
       return;
     }
 
-    // SuperAdmin биш бол зөвхөн өөрийн агуулахын checkin-г устгах боломжтой
     if (
       !currentUser.superAdmin &&
       checkin.warehouse !== currentUser.warehouse

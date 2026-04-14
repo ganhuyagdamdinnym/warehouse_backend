@@ -1,68 +1,136 @@
 import prisma from "../config/prisma";
-import type { Request, Response } from "express";
+import type { Response } from "express";
+import type { AuthRequest } from "../middleware/autoMiddleware";
 import { startOfMonth, endOfMonth, subMonths } from "date-fns";
 
-// GET /api/dashboard
 export const getDashboard = async (
-  req: Request,
+  req: AuthRequest,
   res: Response,
 ): Promise<void> => {
   try {
+    if (!req.user) {
+      res.status(401).json({ error: "Нэвтрээгүй байна" });
+      return;
+    }
+
     const now = new Date();
     const thisMonthStart = startOfMonth(now);
     const thisMonthEnd = endOfMonth(now);
     const lastMonthStart = startOfMonth(subMonths(now, 1));
     const lastMonthEnd = endOfMonth(subMonths(now, 1));
 
+    const currentUser = req.user;
+    const isSuperAdmin = currentUser.superAdmin;
+
+    // ── Warehouse шүүлт ──────────────────────────────
+    const warehouseFilter = isSuperAdmin
+      ? {}
+      : { warehouse: currentUser.warehouse };
+
+    const warehouseTransferFilter = isSuperAdmin
+      ? {}
+      : (() => {
+          // Transfer-т warehouse нэрийг ID болгох хэрэгтэй
+          return {}; // Доор тусад нь шийднэ
+        })();
+
+    // Энгийн хэрэглэгчийн warehouse ID олох
+    let userWarehouseId: number | null = null;
+    if (!isSuperAdmin) {
+      const wh = await prisma.warehouse.findFirst({
+        where: { name: currentUser.warehouse },
+        select: { id: true },
+      });
+      userWarehouseId = wh?.id ?? null;
+    }
+
+    const transferFilter =
+      isSuperAdmin || !userWarehouseId
+        ? {}
+        : {
+            OR: [
+              { fromWarehouseId: userWarehouseId },
+              { toWarehouseId: userWarehouseId },
+            ],
+          };
+
     const [
-      // This month counts
       checkinsThisMonth,
       checkoutsThisMonth,
       transfersThisMonth,
       adjustmentsThisMonth,
-
-      // Last month counts (for growth %)
       checkinsLastMonth,
       checkoutsLastMonth,
       transfersLastMonth,
       adjustmentsLastMonth,
-
-      // All-time / current totals
       totalItems,
       totalContacts,
       totalWarehouses,
       totalUsers,
     ] = await prisma.$transaction([
+      // Энэ сар
       prisma.checkin.count({
-        where: { created_at: { gte: thisMonthStart, lte: thisMonthEnd } },
+        where: {
+          ...warehouseFilter,
+          created_at: { gte: thisMonthStart, lte: thisMonthEnd },
+        },
       }),
       prisma.checkout.count({
-        where: { created_at: { gte: thisMonthStart, lte: thisMonthEnd } },
+        where: {
+          ...warehouseFilter,
+          created_at: { gte: thisMonthStart, lte: thisMonthEnd },
+        },
       }),
       prisma.transfer.count({
-        where: { created_at: { gte: thisMonthStart, lte: thisMonthEnd } },
+        where: {
+          ...transferFilter,
+          created_at: { gte: thisMonthStart, lte: thisMonthEnd },
+        },
       }),
       prisma.adjustment.count({
-        where: { created_at: { gte: thisMonthStart, lte: thisMonthEnd } },
+        where: {
+          ...warehouseFilter,
+          created_at: { gte: thisMonthStart, lte: thisMonthEnd },
+        },
       }),
 
+      // Өнгөрсөн сар
       prisma.checkin.count({
-        where: { created_at: { gte: lastMonthStart, lte: lastMonthEnd } },
+        where: {
+          ...warehouseFilter,
+          created_at: { gte: lastMonthStart, lte: lastMonthEnd },
+        },
       }),
       prisma.checkout.count({
-        where: { created_at: { gte: lastMonthStart, lte: lastMonthEnd } },
+        where: {
+          ...warehouseFilter,
+          created_at: { gte: lastMonthStart, lte: lastMonthEnd },
+        },
       }),
       prisma.transfer.count({
-        where: { created_at: { gte: lastMonthStart, lte: lastMonthEnd } },
+        where: {
+          ...transferFilter,
+          created_at: { gte: lastMonthStart, lte: lastMonthEnd },
+        },
       }),
       prisma.adjustment.count({
-        where: { created_at: { gte: lastMonthStart, lte: lastMonthEnd } },
+        where: {
+          ...warehouseFilter,
+          created_at: { gte: lastMonthStart, lte: lastMonthEnd },
+        },
       }),
 
+      // Нийт тоо — superAdmin биш бол зөвхөн өөрийнх
       prisma.item.count(),
       prisma.contact.count(),
-      prisma.warehouse.count({ where: { is_active: true } }),
-      prisma.user.count(),
+      isSuperAdmin
+        ? prisma.warehouse.count({ where: { is_active: true } })
+        : prisma.warehouse.count({
+            where: { is_active: true, name: currentUser.warehouse },
+          }),
+      isSuperAdmin
+        ? prisma.user.count()
+        : prisma.user.count({ where: { warehouse: currentUser.warehouse } }),
     ]);
 
     const calcGrowth = (current: number, previous: number): string => {
@@ -100,7 +168,7 @@ export const getDashboard = async (
         value: totalWarehouses,
         growth: "0%",
         up: true,
-        sub: "Идэвхтэй",
+        sub: isSuperAdmin ? "Идэвхтэй" : "Өөрийн агуулах",
       },
       transfers: {
         value: transfersThisMonth,
@@ -118,7 +186,7 @@ export const getDashboard = async (
         value: totalUsers,
         growth: "0%",
         up: true,
-        sub: "Нийт",
+        sub: isSuperAdmin ? "Нийт" : "Өөрийн агуулах",
       },
     });
   } catch (err: any) {
