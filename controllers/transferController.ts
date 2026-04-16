@@ -6,7 +6,6 @@ interface TransferItemBody {
   itemId: number;
   name?: string;
   code?: string;
-  weight?: string;
   quantity: string | number;
   unit?: string;
 }
@@ -264,7 +263,6 @@ export const create = async (
               itemId: i.itemId,
               name: i.name,
               code: i.code,
-              weight: i.weight,
               quantity: Number(i.quantity),
               unit: i.unit,
             })),
@@ -377,7 +375,6 @@ export const update = async (
               itemId: i.itemId,
               name: i.name,
               code: i.code,
-              weight: i.weight,
               quantity: Number(i.quantity),
               unit: i.unit,
             })),

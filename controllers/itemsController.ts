@@ -231,6 +231,110 @@ export const getOne = async (
 };
 
 // POST /api/items
+// export const create = async (
+//   req: Request<{}, {}, ItemBody>,
+//   res: Response,
+// ): Promise<void> => {
+//   try {
+//     const {
+//       name,
+//       internalCode,
+//       barcode,
+//       barcodeType,
+//       sku,
+//       category,
+//       unit,
+//       location,
+//       description,
+//       image,
+//       trackStock,
+//       stockAlert,
+//       stock,
+//       warehouseAllocations = [],
+//     } = req.body;
+
+//     if (!name) {
+//       res.status(400).json({ error: "Барааны нэр заавал бөглөнө." });
+//       return;
+//     }
+
+//     // Calculate total from allocations (or use explicit stock if no allocations)
+//     const totalFromAllocations = warehouseAllocations.reduce(
+//       (s, a) => s + (a.quantity || 0),
+//       0,
+//     );
+//     const finalStock =
+//       warehouseAllocations.length > 0 ? totalFromAllocations : (stock ?? 0);
+
+//     const item = await prisma.$transaction(async (tx) => {
+//       // 1. Create the item
+//       const created = await tx.item.create({
+//         data: {
+//           name,
+//           internalCode: internalCode || null,
+//           barcode: barcode || null,
+//           barcodeType: barcodeType || null,
+//           sku: sku || null,
+//           category: category || null,
+//           unit: unit || null,
+//           location: location || null,
+//           description: description || null,
+//           image: image || null,
+//           trackStock: trackStock ?? false,
+//           stockAlert: stockAlert ?? null,
+//           stock: finalStock,
+//         },
+//       });
+
+//       // 2. Seed WarehouseStock for each allocation
+//       for (const alloc of warehouseAllocations) {
+//         if (!alloc.warehouseId || alloc.quantity <= 0) continue;
+
+//         await tx.warehouseStock.upsert({
+//           where: {
+//             itemId_warehouseId: {
+//               itemId: created.id,
+//               warehouseId: alloc.warehouseId,
+//             },
+//           },
+//           update: { quantity: { increment: alloc.quantity } },
+//           create: {
+//             itemId: created.id,
+//             warehouseId: alloc.warehouseId,
+//             quantity: alloc.quantity,
+//           },
+//         });
+
+//         // 3. Record as CHECKIN movement for audit trail
+//         const wh = await tx.warehouse.findUnique({
+//           where: { id: alloc.warehouseId },
+//           select: { name: true },
+//         });
+
+//         await tx.stockMovement.create({
+//           data: {
+//             itemId: created.id,
+//             type: "CHECKIN",
+//             quantity: alloc.quantity,
+//             warehouseTo: wh?.name ?? null,
+//             referenceCode: `INIT-${created.id}`,
+//             note: "Анхны үлдэгдэл",
+//           },
+//         });
+//       }
+
+//       return created;
+//     });
+
+//     res.status(201).json({ message: "Бараа амжилттай үүслээ!", id: item.id });
+//   } catch (err: any) {
+//     res.status(500).json({ error: err.message });
+//   }
+// };
+// itemController.ts — create функцийн зөвхөн өөрчлөгдсөн хэсэг
+// Бусад функцүүд (getAll, getOne, update, remove) хэвээрээ үлдэнэ
+
+// POST /api/items
 export const create = async (
   req: Request<{}, {}, ItemBody>,
   res: Response,
@@ -249,7 +353,6 @@ export const create = async (
       image,
       trackStock,
       stockAlert,
-      stock,
       warehouseAllocations = [],
     } = req.body;
 
@@ -258,16 +361,8 @@ export const create = async (
       return;
     }
 
-    // Calculate total from allocations (or use explicit stock if no allocations)
-    const totalFromAllocations = warehouseAllocations.reduce(
-      (s, a) => s + (a.quantity || 0),
-      0,
-    );
-    const finalStock =
-      warehouseAllocations.length > 0 ? totalFromAllocations : (stock ?? 0);
-
     const item = await prisma.$transaction(async (tx) => {
-      // 1. Create the item
+      // 1. Бараа үүсгэх — анхны сток 0
       const created = await tx.item.create({
         data: {
           name,
@@ -282,43 +377,27 @@ export const create = async (
           image: image || null,
           trackStock: trackStock ?? false,
           stockAlert: stockAlert ?? null,
-          stock: finalStock,
+          stock: 0, // Анхны үлдэгдэл тооцохгүй — checkin-ээр нэмнэ
         },
       });
 
-      // 2. Seed WarehouseStock for each allocation
+      // 2. Байрших агуулахуудыг warehouseStock-д quantity=0-ээр бүртгэнэ
+      // Ингэснээр бараа тухайн агуулахтай холбогдоно, гэхдээ үлдэгдэл нэмэгдэхгүй
       for (const alloc of warehouseAllocations) {
-        if (!alloc.warehouseId || alloc.quantity <= 0) continue;
+        if (!alloc.warehouseId) continue;
 
         await tx.warehouseStock.upsert({
           where: {
             itemId_warehouseId: {
               itemId: created.id,
-              warehouseId: alloc.warehouseId,
+              warehouseId: Number(alloc.warehouseId),
             },
           },
-          update: { quantity: { increment: alloc.quantity } },
+          update: {}, // Аль хэдийн байвал өөрчлөхгүй
           create: {
             itemId: created.id,
-            warehouseId: alloc.warehouseId,
-            quantity: alloc.quantity,
-          },
-        });
-
-        // 3. Record as CHECKIN movement for audit trail
-        const wh = await tx.warehouse.findUnique({
-          where: { id: alloc.warehouseId },
-          select: { name: true },
-        });
-
-        await tx.stockMovement.create({
-          data: {
-            itemId: created.id,
-            type: "CHECKIN",
-            quantity: alloc.quantity,
-            warehouseTo: wh?.name ?? null,
-            referenceCode: `INIT-${created.id}`,
-            note: "Анхны үлдэгдэл",
+            warehouseId: Number(alloc.warehouseId),
+            quantity: 0,
           },
         });
       }

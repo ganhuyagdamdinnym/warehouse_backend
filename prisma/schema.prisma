@@ -30,7 +30,6 @@ model CheckinItem {
   itemId     Int
   name       String? @db.VarChar(100)
   code       String? @db.VarChar(50)
-  weight     String? @db.VarChar(50)
   quantity   String? @db.VarChar(50)
   checkin    Checkin @relation(fields: [checkin_id], references: [id], onDelete: Cascade)
 
@@ -62,7 +61,6 @@ model CheckoutItem {
   item        Item     @relation(fields: [itemId], references: [id])
   name        String?  @db.VarChar(100)
   code        String?  @db.VarChar(50)
-  weight      String?  @db.VarChar(50)
   quantity    String?  @db.VarChar(50)
   checkout    Checkout @relation(fields: [checkout_id], references: [id], onDelete: Cascade)
 
@@ -84,10 +82,13 @@ model Contact {
 
 // ─── Warehouse ────────────────────────────────────────────────────────────────
 
+
+
 model Warehouse {
   id          Int              @id @default(autoincrement())
   code        String           @unique @db.VarChar(50)
   name        String           @db.VarChar(100)
+  logoImage   String?          @db.Text
   phone       String?          @db.VarChar(50)
   email       String?          @db.VarChar(100)
   address     String?          @db.Text
@@ -195,7 +196,6 @@ model TransferItem {
   transfer_id Int
   name        String?  @db.VarChar(100)
   code        String?  @db.VarChar(50)
-  weight      String?  @db.VarChar(50)
   itemId      Int // Item-тэй шууд холбох
   quantity    Int // String-ийг Int болгох
   unit        String?  @db.VarChar(50)

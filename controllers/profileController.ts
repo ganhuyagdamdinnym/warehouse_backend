@@ -55,6 +55,23 @@ export const updateProfile = async (
 };
 
 // PUT /api/profile/password
+export const changeLogo = async (
+  req: AuthRequest,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { logoImage } = req.body;
+    const user = req.user;
+
+    if(user?.superAdmin==true){
+      await prisma
+    }
+    console.log("user", user);
+  } catch (err) {
+    console.log("errr");
+  }
+};
+
 export const updatePassword = async (
   req: AuthRequest,
   res: Response,

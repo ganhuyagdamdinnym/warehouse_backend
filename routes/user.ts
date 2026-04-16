@@ -3,6 +3,7 @@ import { Router } from "express";
 import {
   updatePassword,
   updateProfile,
+  changeLogo,
 } from "../controllers/profileController";
 import {
   getAll,
@@ -17,6 +18,7 @@ const userRouter = Router();
 
 userRouter.post("/updatePassword", authMiddleware, updatePassword);
 userRouter.post("/updateProfile", authMiddleware, updateProfile);
+userRouter.post("/changeLogo", authMiddleware, changeLogo);
 userRouter.get("/", getAll);
 userRouter.post("/", create);
 userRouter.post("/:id", remove);

@@ -5,6 +5,7 @@ import prisma from "../config/prisma";
 interface WarehouseBody {
   code: string;
   name: string;
+  logoImage: string | null;
   phone?: string;
   email?: string;
   address?: string;
@@ -76,14 +77,15 @@ export const create = async (
   res: Response,
 ): Promise<void> => {
   try {
-    const { code, name, phone, email, address, is_active } = req.body;
+    const { code, name, phone, email, address, is_active, logoImage } =
+      req.body;
     if (!code || !name) {
       res.status(400).json({ error: "Код болон нэр заавал бөглөнө." });
       return;
     }
 
     const warehouse = await prisma.warehouse.create({
-      data: { name, code, email, phone, is_active, address },
+      data: { name, code, email, phone, is_active, address, logoImage },
     });
     // const [result] = await db.query<any>(
     //   "INSERT INTO warehouses (code, name, phone, email, address, is_active) VALUES (?,?,?,?,?,?)",
