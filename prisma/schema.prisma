@@ -20,7 +20,7 @@ model Checkin {
   details    String?       @db.Text
   created_at DateTime      @default(now())
   items      CheckinItem[]
-
+  files      
   @@map("checkins")
 }
 
@@ -88,7 +88,7 @@ model Warehouse {
   id          Int              @id @default(autoincrement())
   code        String           @unique @db.VarChar(50)
   name        String           @db.VarChar(100)
-  logoImage   String?          @db.Text
+  logo  String?  @db.LongText 
   phone       String?          @db.VarChar(50)
   email       String?          @db.VarChar(100)
   address     String?          @db.Text
