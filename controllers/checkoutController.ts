@@ -72,80 +72,73 @@ const removeStock = async (
 };
 
 // POST /api/checkouts
-export const create = async (
-  req: AuthRequest,
-  res: Response,
-): Promise<void> => {
-  try {
-    const {
-      code,
-      date,
-      status,
-      contact,
-      warehouse,
-      warehouseId,
-      user,
-      details,
-      items,
-    } = req.body;
-    const currentUser = req.user!;
-
-    console.log("checkout create body:", JSON.stringify(req.body, null, 2));
-
-    // SuperAdmin биш бол зөвхөн өөрийн агуулахаас гаргах боломжтой
-    if (!currentUser.superAdmin && warehouse !== currentUser.warehouse) {
-      res.status(403).json({
-        error: "Та зөвхөн өөрийн агуулахаас зарлага үүсгэх боломжтой",
-      });
-      return;
-    }
-
-    const checkinStatus: "Draft" | "Completed" =
-      status === "Completed" ? "Completed" : "Draft";
-
-    const result = await prisma.$transaction(async (tx) => {
-      const checkout = await tx.checkout.create({
-        data: {
-          code,
-          date: new Date(date),
-          status: checkinStatus,
-          contact,
-          warehouse,
-          warehouseId: Number(warehouseId),
-          user,
-          details,
-          items: {
-            create: (items || []).map((item: any) => ({
-              itemId: item.itemId,
-              name: item.name,
-              code: item.code,
-              weight: String(item.weight || "1"),
-              quantity: String(item.quantity),
-            })),
-          },
-        },
-        include: { items: true },
-      });
-
-      if (checkinStatus === "Completed" && warehouseId) {
-        console.log(
-          "Completing checkout, removing stock for warehouseId:",
-          warehouseId,
-        );
-        await removeStock(tx, checkout.items, Number(warehouseId));
-      }
-
-      return checkout;
-    });
-
-    res
-      .status(201)
-      .json({ message: "Зарлага амжилттай үүслээ!", id: result.id });
-  } catch (err: any) {
-    console.error("checkout create error:", err);
-    res.status(400).json({ error: err.message });
-  }
-};
+// export const create = async (
+//   req: AuthRequest,
+//   res: Response,
+// ): Promise<void> => {
+//   console.log("hi");
+// try {
+//   const {
+//     code,
+//     date,
+//     status,
+//     contact,
+//     warehouse,
+//     warehouseId,
+//     user,
+//     details,
+//     items,
+//   } = req.body;
+//   const currentUser = req.user!;
+//   console.log("hi");
+//   console.log("checkout create body:", JSON.stringify(req.body, null, 2));
+//   if (!currentUser.superAdmin && warehouse !== currentUser.warehouse) {
+//     res.status(403).json({
+//       error: "Та зөвхөн өөрийн агуулахаас зарлага үүсгэх боломжтой",
+//     });
+//     return;
+//   }
+//   const checkinStatus: "Draft" | "Completed" =
+//     status === "Completed" ? "Completed" : "Draft";
+//   const result = await prisma.$transaction(async (tx) => {
+//     const checkout = await tx.checkout.create({
+//       data: {
+//         code,
+//         date: new Date(date),
+//         status: checkinStatus,
+//         contact,
+//         warehouse,
+//         warehouseId: Number(warehouseId),
+//         user,
+//         details,
+//         items: {
+//           create: (items || []).map((item: any) => ({
+//             itemId: item.itemId,
+//             name: item.name,
+//             code: item.code,
+//             quantity: String(item.quantity),
+//           })),
+//         },
+//       },
+//       include: { items: true },
+//     });
+//     if (checkinStatus === "Completed" && warehouseId) {
+//       console.log(
+//         "Completing checkout, removing stock for warehouseId:",
+//         warehouseId,
+//       );
+//       await removeStock(tx, checkout.items, Number(warehouseId));
+//     }
+//     return checkout;
+//   });
+//   res
+//     .status(201)
+//     .json({ message: "Зарлага амжилттай үүслээ!", id: result.id });
+// } catch (err: any) {
+//   console.error("checkout create error:", err);
+//   res.status(400).json({ error: err.message });
+//}
+// };
 
 // PUT /api/checkouts/:id
 export const update = async (
@@ -167,6 +160,7 @@ export const update = async (
     } = req.body;
     const currentUser = req.user!;
 
+    console.log("update");
     const checkinStatus: "Draft" | "Completed" =
       status === "Completed" ? "Completed" : "Draft";
 
@@ -202,7 +196,6 @@ export const update = async (
               itemId: item.itemId,
               name: item.name,
               code: item.code,
-              weight: String(item.weight || "1"),
               quantity: String(item.quantity),
             })),
           },

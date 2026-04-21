@@ -20,8 +20,17 @@ model Checkin {
   details    String?       @db.Text
   created_at DateTime      @default(now())
   items      CheckinItem[]
-  files      
+  files      CheckinFile[]
   @@map("checkins")
+}
+
+model CheckinFile {
+  id         Int      @id @default(autoincrement())
+  url        String   // Файлын байршил (S3 link эсвэл path)
+  name       String   // Файлын нэр (жишээ нь: invoice.pdf)
+  checkin_id Int
+  checkin    Checkin  @relation(fields: [checkin_id], references: [id], onDelete: Cascade)
+  @@map("checkin_files")
 }
 
 model CheckinItem {
@@ -305,8 +314,21 @@ model User {
   createdAt  DateTime       @default(now())
   roleId     Int?
   role       Role?          @relation(fields: [roleId], references: [id], onDelete: SetNull)
-
+  notifications Notification[] // ← нэмнэ
   @@map("users")
+}
+
+model Notification {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title       String   @db.VarChar(200)
+  message     String   @db.Text
+  type        String   @default("info") // "info" | "warning" | "success"
+  isRead      Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@map("notifications")
 }
 
 // ─── Enums ────────────────────────────────────────────────────────────────────

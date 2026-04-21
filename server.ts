@@ -16,6 +16,7 @@ import adjustmentRouter from "./routes/adjustment";
 import categoryRouter from "./routes/category";
 import roleRouter from "./routes/role";
 import authRouter from "./routes/auth";
+import notificationRouter from "./routes/notificationRouter";
 
 dotenv.config();
 
@@ -39,6 +40,7 @@ app.use("/api/adjustments", adjustmentRouter);
 app.use("/api/categories", categoryRouter);
 app.use("/api/roles", roleRouter);
 app.use("/api/auth", authRouter);
+app.use("/api/notification", notificationRouter);
 // DB холболт шалгах
 db.getConnection()
   .then(() => console.log("✅ MySQL холбогдлоо!"))

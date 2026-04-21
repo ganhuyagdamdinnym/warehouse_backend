@@ -1,6 +1,10 @@
 import prisma from "../config/prisma";
 import type { Response } from "express";
 import type { AuthRequest } from "../middleware/autoMiddleware";
+import {
+  checkStockAlerts,
+  notifyWarehouseUsers,
+} from "../src/service/notificationService";
 
 // ─── Сток нэмэх Helper ──────────────────────────────────────────────────
 const addStock = async (
@@ -62,6 +66,9 @@ const addStock = async (
         note: `Орлогоор нэмэгдлээ. Агуулах ID: ${warehouseId}`,
       },
     });
+
+    // Сток доод хязгаараас бага болсон эсэхийг шалгаж notification илгээнэ
+    await checkStockAlerts(tx, resolvedItemId, Number(warehouseId));
   }
 };
 
@@ -86,6 +93,7 @@ export const create = async (
 
     console.log("checkin create body:", JSON.stringify(req.body, null, 2));
 
+    // SuperAdmin биш бол зөвхөн өөрийн агуулахад checkin үүсгэх боломжтой
     if (!currentUser.superAdmin && warehouse !== currentUser.warehouse) {
       res.status(403).json({
         error: "Та зөвхөн өөрийн агуулахад орлого үүсгэх боломжтой",
@@ -111,6 +119,7 @@ export const create = async (
               itemId: item.itemId,
               name: item.name,
               code: item.code,
+              weight: String(item.weight),
               quantity: String(item.quantity),
             })),
           },
@@ -126,6 +135,14 @@ export const create = async (
 
       return checkin;
     });
+
+    // Checkin үүссэн тухай тухайн агуулахын хэрэглэгчдэд мэдэгдэнэ
+    await notifyWarehouseUsers(
+      result.warehouse || "",
+      "Шинэ орлого бүртгэгдлээ",
+      `${result.code} дугаартай орлогын баримт үүссэн. Статус: ${result.status === "Completed" ? "Баталгаажсан" : "Ноорог"}`,
+      result.status === "Completed" ? "success" : "info",
+    );
 
     res.status(201).json({ message: "Амжилттай үүслээ!", id: result.id });
   } catch (err: any) {
@@ -156,6 +173,15 @@ export const update = async (
     console.log("checkin update body:", JSON.stringify(req.body, null, 2));
 
     const currentUser = req.user!;
+
+    // SuperAdmin биш бол зөвхөн өөрийн агуулахад checkin засах боломжтой
+    if (!currentUser.superAdmin && warehouse !== currentUser.warehouse) {
+      res.status(403).json({
+        error: "Та зөвхөн өөрийн агуулахын орлогыг засах боломжтой",
+      });
+      return;
+    }
+
     const checkinStatus: "Draft" | "Completed" =
       status === "Completed" ? "Completed" : "Draft";
 
@@ -190,6 +216,7 @@ export const update = async (
               itemId: item.itemId,
               name: item.name,
               code: item.code,
+              weight: String(item.weight),
               quantity: String(item.quantity),
             })),
           },
